@@ -6,12 +6,35 @@
 <title>Proloom Motorsport — Unified Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://gygzynmbxejqqwveifuk.supabase.co">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 <script>
 // ── SUPABASE CONFIG ──
 const SUPA_URL = 'https://gygzynmbxejqqwveifuk.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd5Z3p5bm1ieGVqcXF3dmVpZnVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzMjM0ODcsImV4cCI6MjA5MTg5OTQ4N30.9t8PzpecQo_yXjoT5mCxUanYEbVUCirGDntX9ZXyIvE';
-const supa = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// Supabase client — initialised after defer script loads
+let supa = null;
+function sb_init(){
+  if(supa || typeof supabase === 'undefined') return;
+  supa = supabase.createClient(SUPA_URL, SUPA_KEY, {
+    realtime: { params: { eventsPerSecond: 2 } }
+  });
+}
+
+// ── DEBOUNCE — prevents save firing on every keystroke ──
+const _sbDebounceTimers = {};
+function sb_saveDebounced(table, data, delay=600){
+  clearTimeout(_sbDebounceTimers[table]);
+  _sbDebounceTimers[table] = setTimeout(()=> sb_save(table, data), delay);
+}
+
+// ── TYPING PAUSE — suspend realtime re-renders while user is typing ──
+let _sbTypingTimer = null;
+let _sbUserTyping  = false;
+document.addEventListener('focusin',  e => { if(e.target.matches('input,textarea,select')) { _sbUserTyping=true; clearTimeout(_sbTypingTimer); }});
+document.addEventListener('focusout', e => { if(e.target.matches('input,textarea,select')) { clearTimeout(_sbTypingTimer); _sbTypingTimer=setTimeout(()=>{ _sbUserTyping=false; },800); }});
 
 // ── SYNC STATUS UI ──
 function sb_setStatus(msg, type='ok'){
@@ -23,8 +46,9 @@ function sb_setStatus(msg, type='ok'){
   if(type==='ok') setTimeout(()=>{ el.style.opacity='0'; }, 2500);
 }
 
-// ── GENERIC UPSERT (singleton row pattern) ──
+// ── GENERIC UPSERT ──
 async function sb_save(table, data){
+  sb_init(); if(!supa) return;
   try{
     const { error } = await supa.from(table).upsert({ id:'singleton', ...data, updated_at: new Date().toISOString() });
     if(error) throw error;
@@ -36,6 +60,7 @@ async function sb_save(table, data){
 
 // ── GENERIC LOAD ──
 async function sb_load(table){
+  sb_init(); if(!supa) return null;
   try{
     const { data, error } = await supa.from(table).select('*').eq('id','singleton').single();
     if(error && error.code !== 'PGRST116') throw error;
@@ -46,10 +71,12 @@ async function sb_load(table){
   }
 }
 
-// ── REALTIME SUBSCRIPTION ──
+// ── REALTIME SUBSCRIPTION — skips re-render if user is actively typing ──
 function sb_subscribe(table, callback){
+  sb_init(); if(!supa) return;
   supa.channel(`rt-${table}`)
     .on('postgres_changes', { event:'UPDATE', schema:'public', table }, payload => {
+      if(_sbUserTyping) return; // don't disrupt typing
       callback(payload.new);
     })
     .subscribe();
@@ -1905,7 +1932,7 @@ let kpiBfWeekKey=null;
 const LIME='#7bc800',GREEN='#1a8f5a',AMBER='#e08000',RED='#d93025',BLUE='#1a6fd4',LIME_DARK='#5a9e00';
 
 function kpi_load(){ try{ const r=localStorage.getItem(KPI_STORAGE); if(r){const p=JSON.parse(r); kpiState={...kpiState,...p}; if(!kpiState.invoices) kpiState.invoices=[];} }catch(e){} }
-function kpi_save(){ try{ localStorage.setItem(KPI_STORAGE, JSON.stringify(kpiState)); }catch(e){} sb_save('kpi_state',{targets:kpiState.targets,weeks:kpiState.weeks,invoices:kpiState.invoices}); }
+function kpi_save(){ try{ localStorage.setItem(KPI_STORAGE, JSON.stringify(kpiState)); }catch(e){} sb_saveDebounced('kpi_state',{targets:kpiState.targets,weeks:kpiState.weeks,invoices:kpiState.invoices}); }
 function kpi_statusColor(p){ return p>=90?GREEN:p>=65?AMBER:RED; }
 function kpi_pct(v,t){ if(!t)return null; return Math.min(Math.round((v/t)*100),150); }
 function kpi_fmtD(v){ return '$'+Math.round(v||0).toLocaleString('en-AU'); }
@@ -2102,7 +2129,7 @@ function wip_load(){
 }
 function wip_save(){
   try{ localStorage.setItem(WIP_STORAGE,JSON.stringify({big:wipBig,small:wipSmall,pid:wipPid})); }catch(e){}
-  sb_save('wip_state',{big:wipBig,small:wipSmall,pid:wipPid});
+  sb_saveDebounced('wip_state',{big:wipBig,small:wipSmall,pid:wipPid});
 }
 function wip_esc(s){ return(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function wip_getBig(pid){ return wipBig.find(p=>p.pid===pid); }
@@ -2652,7 +2679,7 @@ function sched_load(){
   sched_loadSamples();
   sched_save();
 }
-function sched_save(){ try{ localStorage.setItem(SCHED_STORAGE,JSON.stringify({projects:schedProjects,year:schedYear})); }catch(e){ console.error('Scheduler save failed',e); } sb_save('sched_state',{projects:schedProjects,year:schedYear}); }
+function sched_save(){ try{ localStorage.setItem(SCHED_STORAGE,JSON.stringify({projects:schedProjects,year:schedYear})); }catch(e){ console.error('Scheduler save failed',e); } sb_saveDebounced('sched_state',{projects:schedProjects,year:schedYear}); }
 function sched_dayOfYear(d){ return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
 function sched_daysInYear(y){ return((y%4===0&&y%100!==0)||y%400===0)?366:365; }
 function sched_dateToX(date,tw){ const y=date.getFullYear(); if(y<schedYear)return 0; if(y>schedYear)return tw; return(sched_dayOfYear(date)/sched_daysInYear(schedYear))*tw; }
@@ -2754,6 +2781,7 @@ function renderHomeDashboard(){
 
 // ── Async boot: load from Supabase, fall back to localStorage ──
 async function sb_bootApp(){
+  sb_init();
   sb_setStatus('● Connecting...', 'warn');
 
   // Load all 7 data sources from Supabase in parallel
@@ -2916,8 +2944,11 @@ async function sb_migrate(){
 // ── Scheduler resize ──
 window.addEventListener('resize', ()=>{ if(currentPage==='scheduler') sched_render(); });
 
-// ── Boot ──
-sb_bootApp();
+// ── Boot — wait for deferred Supabase script then start ──
+window.addEventListener('load', () => {
+  sb_init();
+  sb_bootApp();
+});
 
 /* ══════════════════════════════════════════════════════════
    TIMESHEETS
@@ -2938,7 +2969,7 @@ let tsWeekOffset = 0;
 let tsData = {};
 
 function ts_load(){ try{ const d=localStorage.getItem(TS_STORAGE); if(d) tsData=JSON.parse(d); }catch(e){} }
-function ts_save(){ try{ localStorage.setItem(TS_STORAGE,JSON.stringify(tsData)); }catch(e){} sb_save('ts_state',{data:tsData}); }
+function ts_save(){ try{ localStorage.setItem(TS_STORAGE,JSON.stringify(tsData)); }catch(e){} sb_saveDebounced('ts_state',{data:tsData}); }
 
 function ts_getWeekKey(offset=0){
   const d=new Date(); d.setDate(d.getDate()-d.getDay()+1+offset*7);
@@ -3190,7 +3221,7 @@ function invLoad(){
 }
 function invSave(){
   try{ localStorage.setItem(INV_STORAGE,JSON.stringify({inv:invS.inv,pos:invS.pos,invoices:invS.invoices,contacts:invS.contacts,company:invS.company,buildLog:invS.buildLog,itemEvents:invS.itemEvents,reorderSettings:invS.reorderSettings})); }catch{}
-  sb_save('inv_state',{inv:invS.inv,pos:invS.pos,invoices:invS.invoices,contacts:invS.contacts,company:invS.company,build_log:invS.buildLog,item_events:invS.itemEvents,reorder_settings:invS.reorderSettings});
+  sb_saveDebounced('inv_state',{inv:invS.inv,pos:invS.pos,invoices:invS.invoices,contacts:invS.contacts,company:invS.company,build_log:invS.buildLog,item_events:invS.itemEvents,reorder_settings:invS.reorderSettings});
 }
 
 /* ── Toast ── */
@@ -3995,7 +4026,7 @@ let tbNoteTarget = null; // {source, pid, tid, type, staffId, taskId}
 let tbDragId = null;     // id of manual task being dragged
 
 function tb_load(){ try{ const d=localStorage.getItem(TB_STORAGE); if(d) tbManual=JSON.parse(d); }catch(e){} }
-function tb_save(){ try{ localStorage.setItem(TB_STORAGE,JSON.stringify(tbManual)); }catch(e){} sb_save('tb_manual',{tasks:tbManual}); }
+function tb_save(){ try{ localStorage.setItem(TB_STORAGE,JSON.stringify(tbManual)); }catch(e){} sb_saveDebounced('tb_manual',{tasks:tbManual}); }
 
 /* ── Get WIP tasks for a staff member ── */
 function tb_getWipTasks(staffId){
@@ -4319,7 +4350,7 @@ let tbShared = [];
 let tbSharedDragId = null;
 
 function tbs_load(){ try{ const d=localStorage.getItem(TB_SHARED_STORAGE); if(d) tbShared=JSON.parse(d); }catch(e){} }
-function tbs_save(){ try{ localStorage.setItem(TB_SHARED_STORAGE,JSON.stringify(tbShared)); }catch(e){} sb_save('tb_shared',{tasks:tbShared}); }
+function tbs_save(){ try{ localStorage.setItem(TB_SHARED_STORAGE,JSON.stringify(tbShared)); }catch(e){} sb_saveDebounced('tb_shared',{tasks:tbShared}); }
 
 /* ── Add task button from topbar — prompts for staff member ── */
 function tb_addTaskCurrent(){
