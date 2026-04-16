@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Proloom Motorsport — Unified Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
 <link rel="preconnect" href="https://gygzynmbxejqqwveifuk.supabase.co">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
 <script>
 // ── SUPABASE CONFIG ──
@@ -2023,6 +2024,7 @@ function kpi_makeGrad(ctx,r,g,b,alpha=0.15,h=160){ const gr=ctx.createLinearGrad
 const KPI_CHART_OPTS=()=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',borderColor:'rgba(0,0,0,0.12)',borderWidth:1,titleColor:'#6b6b7a',bodyColor:'#0d0d0f',padding:9,callbacks:{label:c=>c.dataset.label==='Target'&&c.raw===null?null:c.dataset.label+': '+kpi_fmtD(c.raw)}}},scales:{x:{ticks:{color:'#a0a0b0',font:{family:'Inter',size:9},maxRotation:40,autoSkip:true,maxTicksLimit:10},grid:{color:'rgba(0,0,0,0.04)'},border:{color:'rgba(0,0,0,0.1)'}},y:{ticks:{color:'#a0a0b0',font:{family:'Inter',size:9},callback:v=>kpi_fmtK(v)},grid:{color:'rgba(0,0,0,0.04)'},border:{color:'transparent'}}}});
 
 function kpi_buildWeeklyChart(){
+  if(typeof Chart === 'undefined') return;
   const el=document.getElementById('weekly-chart'); if(!el) return;
   const l12=[]; for(let i=-11;i<=0;i++) l12.push(kpi_getWeekKey(i));
   const ws=new Set([...l12]); kpi_getAllWeeks().forEach(wk=>{if(kpi_getWeekRev(wk)>0)ws.add(wk);});
@@ -2034,6 +2036,7 @@ function kpi_buildWeeklyChart(){
 }
 
 function kpi_buildMonthlyChart(){
+  if(typeof Chart === 'undefined') return;
   const el=document.getElementById('monthly-chart'); if(!el) return;
   const now=new Date(),curY=now.getFullYear(),curM=now.getMonth();
   const labels=[],data=[],targets=[];
@@ -2043,6 +2046,7 @@ function kpi_buildMonthlyChart(){
 }
 
 function kpi_buildYearlyChart(){
+  if(typeof Chart === 'undefined') return;
   const el=document.getElementById('yearly-chart'); if(!el) return;
   const now=new Date(),yr=now.getFullYear(),curM=now.getMonth();
   const labels=[],data=[],targets=[];
@@ -2759,7 +2763,7 @@ function renderHomeDashboard(){
   const l12=[]; for(let i=-11;i<=0;i++) l12.push(kpi_getWeekKey(i));
   const labels=l12.map(wk=>new Date(wk).toLocaleDateString('en-AU',{day:'numeric',month:'short'}));
   const data=l12.map(wk=>kpi_getWeekRev(wk));
-  const ctx=document.getElementById('h-weekly-chart'); if(ctx){
+  const ctx=document.getElementById('h-weekly-chart'); if(ctx && typeof Chart !== 'undefined'){
     if(homeWChart) homeWChart.destroy();
     homeWChart=new Chart(ctx.getContext('2d'),{type:'line',data:{labels,datasets:[{label:'Revenue',data,borderColor:LIME,borderWidth:2,pointBackgroundColor:LIME,pointBorderColor:'#fff',pointBorderWidth:1.5,pointRadius:2.5,pointHoverRadius:4,fill:true,backgroundColor:(()=>{const g=ctx.getContext('2d').createLinearGradient(0,0,0,90); g.addColorStop(0,'rgba(123,200,0,0.18)'); g.addColorStop(1,'rgba(123,200,0,0)'); return g;})(),tension:0.35}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',borderColor:'rgba(0,0,0,0.12)',borderWidth:1,titleColor:'#6b6b7a',bodyColor:'#0d0d0f',padding:8,callbacks:{label:c=>kpi_fmtD(c.raw)}}},scales:{x:{ticks:{color:'#a0a0b0',font:{family:'Inter',size:8},maxRotation:30,autoSkip:true,maxTicksLimit:6},grid:{display:false},border:{display:false}},y:{ticks:{color:'#a0a0b0',font:{family:'Inter',size:8},callback:v=>kpi_fmtK(v)},grid:{color:'rgba(0,0,0,0.04)'},border:{display:false}}}}});
   }
@@ -2944,10 +2948,15 @@ async function sb_migrate(){
 // ── Scheduler resize ──
 window.addEventListener('resize', ()=>{ if(currentPage==='scheduler') sched_render(); });
 
-// ── Boot — wait for deferred Supabase script then start ──
+// ── Boot — wait for ALL deferred scripts then start ──
 window.addEventListener('load', () => {
   sb_init();
   sb_bootApp();
+  // Re-render charts once Chart.js is confirmed loaded
+  document.querySelector('script[src*="chart.umd"]')?.addEventListener('load', ()=>{
+    if(currentPage==='kpi') kpi_render();
+    if(currentPage==='home') renderHomeDashboard();
+  });
 });
 
 /* ══════════════════════════════════════════════════════════
